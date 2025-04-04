@@ -6,7 +6,7 @@ export class Note {
     id!: number;
 
     @Column()
-    userId!: number;
+    userId!: string;
 
     @Column()
     title!: string;
@@ -14,8 +14,11 @@ export class Note {
     @Column()
     content!: string;
 
-    @Column({ nullable: true })
+    @Column()
     category!: string;
+
+    @Column('simple-array')
+    tags!: string[];
 
     @CreateDateColumn()
     created!: Date;

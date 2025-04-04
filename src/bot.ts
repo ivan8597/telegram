@@ -70,7 +70,7 @@ class TelegramBot {
       ctx.reply(
         'Список доступных команд:\n' +
         '/start - Начать работу\n' +
-        '/note [заголовок] [текст] [категория] - Создать заметку\n' +
+        '/note [заголовок] [текст] [@тег1 @тег2] [#категория] - Создать заметку\n' +
         '/notes - Показать все заметки\n' +
         '/search [запрос] - Поиск по заметкам\n' +
         '/editnote [id] [заголовок] [текст] [категория] - Редактировать заметку\n' +
@@ -81,18 +81,22 @@ class TelegramBot {
         '/stats - Показать статистику\n' +
         '/export - Экспортировать данные\n' +
         '/clear - Очистить все данные\n' +
-        '/delete [тип] [id] - Удалить запись'
+        '/delete [тип] [id] - Удалить запись\n' +
+        '/tags - Показать теги заметок\n' +
+        '/categories - Показать категории заметок'
       );
     });
 
     this.bot.command('note', async (ctx) => {
       const [_, title, ...rest] = ctx.message.text.split(' ');
+      const tags = rest.filter(word => word.startsWith('@')).map(tag => tag.substring(1));
       const category = rest[rest.length - 1].startsWith('#') ? rest.pop() : undefined;
-      const content = rest.join(' ');
+      const content = rest.filter(word => !word.startsWith('@') && !word.startsWith('#')).join(' ');
+      
       if (!title || !content) {
-        return ctx.reply('Использование: /note [заголовок] [текст] [#категория/подкатегория]');
+        return ctx.reply('Использование: /note [заголовок] [текст] [@тег1 @тег2] [#категория]');
       }
-      await this.createNote(ctx, title, content, category?.substring(1));
+      await this.createNote(ctx, title, content, category?.substring(1), tags);
     });
 
     this.bot.command('editnote', async (ctx) => {
@@ -113,13 +117,44 @@ class TelegramBot {
     });
 
     this.bot.command('remind', async (ctx) => {
-      const [_, minutes, ...rest] = ctx.message.text.split(' ');
-      const repeat = ['ежедневно', 'еженедельно'].includes(rest[rest.length - 1]) ? rest.pop() : undefined;
+      const [_, timeStr, ...rest] = ctx.message.text.split(' ');
       const text = rest.join(' ');
-      if (!minutes || !text) {
-        return ctx.reply('Использование: /remind [минуты] [текст] [повтор:ежедневно/еженедельно]');
+      
+      if (!timeStr || !text) {
+        return ctx.reply(
+          'Использование:\n' +
+          '1. С минутами: /remind [минуты] [текст] [повтор:ежедневно/еженедельно]\n' +
+          '2. С датой: /remind [дд.мм.гггг чч:мм] [текст] [повтор]'
+        );
       }
-      await this.setReminder(ctx, parseInt(minutes), text, repeat as 'ежедневно' | 'еженедельно');
+
+      // Проверяем формат даты
+      if (timeStr.includes('.')) {
+        const dateMatch = timeStr.match(/(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})/);
+        if (dateMatch) {
+          const [_, day, month, year, hours, minutes] = dateMatch;
+          const targetDate = new Date(
+            parseInt(year),
+            parseInt(month) - 1,
+            parseInt(day),
+            parseInt(hours),
+            parseInt(minutes)
+          );
+          
+          if (targetDate.getTime() < Date.now()) {
+            return ctx.reply('Указанная дата уже прошла');
+          }
+          
+          const repeat = ['ежедневно', 'еженедельно'].includes(rest[rest.length - 1]) ? rest.pop() : undefined;
+          await this.setReminderWithDate(ctx, targetDate, text, repeat as 'ежедневно' | 'еженедельно');
+        } else {
+          ctx.reply('Неверный формат даты. Используйте: дд.мм.гггг чч:мм');
+        }
+      } else {
+        const minutes = parseInt(timeStr);
+        const repeat = ['ежедневно', 'еженедельно'].includes(rest[rest.length - 1]) ? rest.pop() : undefined;
+        await this.setReminder(ctx, minutes, text, repeat as 'ежедневно' | 'еженедельно');
+      }
     });
 
     this.bot.command('editreminder', async (ctx) => {
@@ -142,6 +177,9 @@ class TelegramBot {
       if (!type || !id) return ctx.reply('Использование: /delete [тип:note/reminder/media] [id]');
       await this.deleteItem(ctx, type, parseInt(id));
     });
+
+    this.bot.command('tags', async (ctx) => await this.showTags(ctx));
+    this.bot.command('categories', async (ctx) => await this.showCategories(ctx));
   }
 
   private setupHandlers(): void {
@@ -150,7 +188,7 @@ class TelegramBot {
       
       switch (true) {
         case messageText.includes('новая заметка'):
-          ctx.reply('Введите заметку в формате: [заголовок] [текст] [#категория/подкатегория]');
+          ctx.reply('Введите заметку в формате: [заголовок] [текст] [@тег1 @тег2] [#категория]');
           break;
         case messageText.includes('мои заметки'):
           await this.showNotes(ctx);
@@ -180,12 +218,12 @@ class TelegramBot {
           await this.clearUserData(ctx);
           break;
         default:
-          if (messageText.includes('привет')) {
+      if (messageText.includes('привет')) {
             ctx.reply('Здравствуйте! Чем могу помочь?');
-          } else if (messageText.includes('как дела')) {
-            ctx.reply('Отлично, спасибо! А у вас?');
-          } else {
-            ctx.reply('Я вас понял. Напишите /help для списка команд');
+      } else if (messageText.includes('как дела')) {
+        ctx.reply('Отлично, спасибо! А у вас?');
+      } else {
+        ctx.reply('Я вас понял. Напишите /help для списка команд');
           }
       }
     });
@@ -234,7 +272,7 @@ class TelegramBot {
     });
   }
 
-  private async createNote(ctx: any, title: string, content: string, category?: string): Promise<void> {
+  private async createNote(ctx: any, title: string, content: string, category?: string, tags: string[] = []): Promise<void> {
     try {
       if (!this.noteRepository) throw new Error('База данных не инициализирована');
       const note = this.noteRepository.create({
@@ -242,6 +280,7 @@ class TelegramBot {
         title,
         content,
         category: category || '',
+        tags: tags,
         created: new Date(),
         lastEdited: new Date()
       });
@@ -253,6 +292,7 @@ class TelegramBot {
         `Заголовок: ${note.title}\n` +
         `Текст: ${note.content}\n` +
         `${category ? `Категория: ${category}\n` : ''}` +
+        `${tags.length > 0 ? `Теги: ${tags.map(t => '@' + t).join(' ')}\n` : ''}` +
         `Создана: ${note.created.toLocaleString()}`
       );
     } catch (error) {
@@ -309,6 +349,7 @@ class TelegramBot {
           `${note.title}\n` +
           `   ${note.content}\n` +
           `${note.category ? `   Категория: ${note.category}\n` : ''}` +
+          `${note.tags.length > 0 ? `   Теги: ${note.tags.map(t => '@' + t).join(' ')}\n` : ''}` +
           `   Создана: ${note.created.toLocaleString()}` +
           `${note.lastEdited && note.lastEdited > note.created ? 
             `\n   Редактирована: ${note.lastEdited.toLocaleString()}` : ''}`
@@ -325,14 +366,27 @@ class TelegramBot {
   private async searchNotes(ctx: any, query: string): Promise<void> {
     try {
       if (!this.noteRepository) throw new Error('База данных не инициализирована');
-      const notes = await this.noteRepository.find({
-        where: [
-          { userId: ctx.from.id, title: Like(`%${query}%`) },
-          { userId: ctx.from.id, content: Like(`%${query}%`) },
-          { userId: ctx.from.id, category: Like(`%${query}%`) }
-        ],
-        order: { created: 'DESC' }
-      });
+      
+      let notes;
+      if (query.startsWith('@')) {
+        // Поиск по тегу
+        const tag = query.substring(1);
+        notes = await this.noteRepository.find({
+          where: { userId: ctx.from.id },
+          order: { created: 'DESC' }
+        });
+        notes = notes.filter(note => note.tags.includes(tag));
+      } else {
+        // Обычный поиск
+        notes = await this.noteRepository.find({
+          where: [
+            { userId: ctx.from.id, title: Like(`%${query}%`) },
+            { userId: ctx.from.id, content: Like(`%${query}%`) },
+            { userId: ctx.from.id, category: Like(`%${query}%`) }
+          ],
+          order: { created: 'DESC' }
+        });
+      }
 
       if (notes.length === 0) {
         ctx.reply('Заметки по вашему запросу не найдены');
@@ -345,6 +399,7 @@ class TelegramBot {
           `${note.title}\n` +
           `   ${note.content}\n` +
           `${note.category ? `   Категория: ${note.category}\n` : ''}` +
+          `${note.tags.length > 0 ? `   Теги: ${note.tags.map(t => '@' + t).join(' ')}\n` : ''}` +
           `   Создана: ${note.created.toLocaleString()}`
         )
         .join('\n\n');
@@ -645,13 +700,103 @@ class TelegramBot {
     }
   }
 
+  private async setReminderWithDate(ctx: any, date: Date, text: string, repeat?: 'ежедневно' | 'еженедельно'): Promise<void> {
+    try {
+      if (!this.reminderRepository) throw new Error('База данных не инициализирована');
+      
+      const reminder = this.reminderRepository.create({
+        userId: ctx.from.id,
+        text,
+        time: date,
+        completed: false,
+        repeat,
+        created: new Date()
+      });
+
+      await this.reminderRepository.save(reminder);
+      ctx.reply(
+        `✅ Напоминание установлено:\n` +
+        `ID: ${reminder.id}\n` +
+        `Время: ${reminder.time.toLocaleString()}` +
+        `${repeat ? `\nПовтор: ${repeat}` : ''}`
+      );
+
+      this.scheduleReminder(ctx, reminder);
+    } catch (error) {
+      console.error('Ошибка создания напоминания:', error);
+      ctx.reply('Произошла ошибка при создании напоминания');
+    }
+  }
+
+  private async showTags(ctx: any): Promise<void> {
+    try {
+      if (!this.noteRepository) throw new Error('База данных не инициализирована');
+      
+      const notes = await this.noteRepository.find({ where: { userId: ctx.from.id } });
+      const tagCounts = new Map<string, number>();
+      
+      notes.forEach(note => {
+        if (note.tags) {
+          note.tags.forEach(tag => {
+            tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
+          });
+        }
+      });
+
+      if (tagCounts.size === 0) {
+        ctx.reply('У вас пока нет тегов');
+        return;
+      }
+
+      const tagsText = Array.from(tagCounts.entries())
+        .sort((a, b) => b[1] - a[1])
+        .map(([tag, count]) => `@${tag}: ${count} заметок`)
+        .join('\n');
+
+      ctx.reply(`🏷 Ваши теги:\n\n${tagsText}`);
+    } catch (error) {
+      console.error('Ошибка получения тегов:', error);
+      ctx.reply('Произошла ошибка при получении тегов');
+    }
+  }
+
+  private async showCategories(ctx: any): Promise<void> {
+    try {
+      if (!this.noteRepository) throw new Error('База данных не инициализирована');
+      
+      const categories = await this.noteRepository
+        .createQueryBuilder('note')
+        .select('note.category', 'category')
+        .addSelect('COUNT(*)', 'count')
+        .where('note.userId = :userId', { userId: ctx.from.id })
+        .andWhere('note.category != :empty', { empty: '' })
+        .groupBy('note.category')
+        .getRawMany();
+
+      if (categories.length === 0) {
+        ctx.reply('У вас пока нет категорий');
+        return;
+      }
+
+      const categoriesText = categories
+        .sort((a, b) => b.count - a.count)
+        .map(c => `#${c.category}: ${c.count} заметок`)
+        .join('\n');
+
+      ctx.reply(`📑 Ваши категории:\n\n${categoriesText}`);
+    } catch (error) {
+      console.error('Ошибка получения категорий:', error);
+      ctx.reply('Произошла ошибка при получении категорий');
+    }
+  }
+
   public async launch(): Promise<void> {
     try {
       await this.bot.launch();
       console.log('Бот успешно запущен');
       
-      process.once('SIGINT', () => this.bot.stop('SIGINT'));
-      process.once('SIGTERM', () => this.bot.stop('SIGTERM'));
+    process.once('SIGINT', () => this.bot.stop('SIGINT'));
+    process.once('SIGTERM', () => this.bot.stop('SIGTERM'));
     } catch (error) {
       console.error('Ошибка запуска бота:', error);
     }
