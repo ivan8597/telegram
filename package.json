@@ -1,0 +1,25 @@
+{
+  "name": "telegram",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/bot.js",
+    "dev": "tsc --watch"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@types/dotenv": "^8.2.3",
+    "@types/node": "^22.14.0",
+    "axios": "^1.8.4",
+    "dotenv": "^16.4.7",
+    "reflect-metadata": "^0.2.2",
+    "sqlite3": "^5.1.7",
+    "telegraf": "^4.16.3",
+    "typeorm": "^0.3.22",
+    "typescript": "^5.8.2"
+  }
+}
